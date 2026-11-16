@@ -61,16 +61,18 @@ def get_database_url():
 # FastAPI application lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     global engine, SessionLocal
 
-    # Retrieve credentials and initialize database engine
-    database_url = get_database_url()
+    # Check whether an engine was already provided.
+    # Tests provide their own SQLite engine.
+    owns_engine = engine is None
 
-    engine = create_engine(
-        database_url,
-        pool_pre_ping=True
-    )
+    if owns_engine:
+        database_url = get_database_url()
+        engine = create_engine(
+            database_url,
+            pool_pre_ping=True
+        )
 
     SessionLocal = sessionmaker(
         bind=engine,
@@ -78,15 +80,16 @@ async def lifespan(app: FastAPI):
         autocommit=False
     )
 
-    # Learning-project shortcut; production should use migrations.
     Base.metadata.create_all(bind=engine)
 
     try:
         yield
     finally:
-        engine.dispose()
-        engine = None
-        SessionLocal = None
+        # Only dispose engines created by the application.
+        if owns_engine:
+            engine.dispose()
+            engine = None
+            SessionLocal = None
 
 
 app = FastAPI(
