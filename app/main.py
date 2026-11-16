@@ -21,37 +21,32 @@ SessionLocal = None
 
 # Retrieve database credentials and construct SQLAlchemy URL
 def get_database_url():
-
     secret_arn = os.getenv("DB_SECRET_ARN")
     region = os.getenv("AWS_DEFAULT_REGION")
     database_name = os.getenv("DB_NAME")
+    db_host = os.getenv("DB_HOST")
+    db_port = os.getenv("DB_PORT", "5432")
 
-    if not secret_arn or not region or not database_name:
+    if not all([secret_arn, region, database_name, db_host]):
         raise RuntimeError(
-            "DB_SECRET_ARN, AWS_DEFAULT_REGION and DB_NAME must be configured"
+            "DB_SECRET_ARN, AWS_DEFAULT_REGION, DB_NAME "
+            "and DB_HOST must be configured"
         )
 
-    # Create Secrets Manager client
-    secrets_manager = boto3.client(
+    client = boto3.client(
         "secretsmanager",
         region_name=region
     )
 
-    # Retrieve RDS master secret
-    response = secrets_manager.get_secret_value(
-        SecretId=secret_arn
-    )
-
-    # Parse secret JSON
+    response = client.get_secret_value(SecretId=secret_arn)
     secret = json.loads(response["SecretString"])
 
-    # Construct SQLAlchemy URL
-    database_url = URL.create(
+    return URL.create(
         drivername="postgresql+psycopg",
         username=secret["username"],
         password=secret["password"],
-        host=secret["host"],
-        port=int(secret["port"]),
+        host=db_host,
+        port=int(db_port),
         database=database_name
     )
 
