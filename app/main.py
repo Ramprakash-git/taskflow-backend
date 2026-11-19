@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Task
 from app.schemas import TaskCreate, TaskRead, TaskUpdate
+from app.auth import get_current_user
 
 
 # Global database objects
@@ -50,16 +51,13 @@ def get_database_url():
         database=database_name
     )
 
-    return database_url
-
 
 # FastAPI application lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine, SessionLocal
 
-    # Check whether an engine was already provided.
-    # Tests provide their own SQLite engine.
+    # Tests may provide their own SQLite engine.
     owns_engine = engine is None
 
     if owns_engine:
@@ -75,7 +73,8 @@ async def lifespan(app: FastAPI):
         autocommit=False
     )
 
-    Base.metadata.create_all(bind=engine)
+    # Database schema is managed through migrations.
+    # Do not use create_all() here: it does not update existing tables.
 
     try:
         yield
@@ -137,26 +136,33 @@ def readiness():
         )
 
 
-# List tasks
+# List authenticated user's tasks
 @app.get("/api/tasks", response_model=list[TaskRead])
 def list_tasks(
     status: str | None = Query(default=None),
     search: str | None = Query(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
 
-    statement = select(Task).order_by(Task.id.desc())
+    statement = (
+        select(Task)
+        .where(Task.user_sub == current_user["sub"])
+        .order_by(Task.id.desc())
+    )
 
     if status:
         statement = statement.where(Task.status == status)
 
     if search:
-        statement = statement.where(Task.title.ilike(f"%{search}%"))
+        statement = statement.where(
+            Task.title.ilike(f"%{search}%")
+        )
 
     return db.scalars(statement).all()
 
 
-# Create task
+# Create task for authenticated user
 @app.post(
     "/api/tasks",
     response_model=TaskRead,
@@ -164,10 +170,14 @@ def list_tasks(
 )
 def create_task(
     payload: TaskCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
 
-    task = Task(**payload.model_dump())
+    task = Task(
+        **payload.model_dump(),
+        user_sub=current_user["sub"]
+    )
 
     db.add(task)
     db.commit()
@@ -176,14 +186,20 @@ def create_task(
     return task
 
 
-# Get individual task
+# Get individual task belonging to authenticated user
 @app.get("/api/tasks/{task_id}", response_model=TaskRead)
 def get_task(
     task_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
 
-    task = db.get(Task, task_id)
+    statement = select(Task).where(
+        Task.id == task_id,
+        Task.user_sub == current_user["sub"]
+    )
+
+    task = db.scalar(statement)
 
     if task is None:
         raise HTTPException(
@@ -194,15 +210,21 @@ def get_task(
     return task
 
 
-# Update task
+# Update authenticated user's task
 @app.patch("/api/tasks/{task_id}", response_model=TaskRead)
 def update_task(
     task_id: int,
     payload: TaskUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
 
-    task = db.get(Task, task_id)
+    statement = select(Task).where(
+        Task.id == task_id,
+        Task.user_sub == current_user["sub"]
+    )
+
+    task = db.scalar(statement)
 
     if task is None:
         raise HTTPException(
@@ -219,14 +241,20 @@ def update_task(
     return task
 
 
-# Delete task
+# Delete authenticated user's task
 @app.delete("/api/tasks/{task_id}", status_code=204)
 def delete_task(
     task_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
 
-    task = db.get(Task, task_id)
+    statement = select(Task).where(
+        Task.id == task_id,
+        Task.user_sub == current_user["sub"]
+    )
+
+    task = db.scalar(statement)
 
     if task is None:
         raise HTTPException(
