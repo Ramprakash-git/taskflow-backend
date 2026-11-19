@@ -1,4 +1,7 @@
 name: Taskflow backend CD
+concurrency:
+  group: taskflow-eks-deployment
+  cancel-in-progress: false
 
 on:
     workflow_run:
